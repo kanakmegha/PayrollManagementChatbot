@@ -4,3 +4,5 @@ python-dotenv
 llama-index 
 supabase==2.3.0
 httpx
+llama-index==0.10.46
+llama-index-vector-stores-supabase==0.1.12

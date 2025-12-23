@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client
 from llama_index.core import VectorStoreIndex, StorageContext
-from llama_index.vector_stores.supabase import SupabaseVectorStore
+from llama_index.core.vector_stores import SupabaseVectorStore
 from llama_index.core import SimpleDirectoryReader
 import httpx
 import os
