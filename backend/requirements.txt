@@ -4,9 +4,12 @@ uvicorn==0.24.0
 python-dotenv==1.0.0
 httpx==0.24.1
 
-# LlamaIndex (Modern v0.12+ Structure)
-llama-index==0.12.12
-llama-index-vector-stores-supabase==0.4.1
+# LlamaIndex Ecosystem 
+# Removing specific versions allows pip to find a compatible set automatically
+llama-index
+llama-index-core
+llama-index-vector-stores-supabase
+llama-index-embeddings-huggingface
 
 # Database
 supabase==2.3.0
