@@ -1,11 +1,14 @@
-from fastapi import FastAPI
+import os
+import httpx
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
-from llama_index.core import VectorStoreIndex, StorageContext
-from llama_index.core.vector_stores import SupabaseVectorStore
-from llama_index.core import SimpleDirectoryReader
-import httpx
-import os
+
+# Modular LlamaIndex Imports (v0.10+)
+from llama_index.core import VectorStoreIndex, StorageContext, Settings
+from llama_index.vector_stores.supabase import SupabaseVectorStore
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.node_parser import SentenceSplitter
 
 app = FastAPI()
 
@@ -14,8 +17,19 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
 
+if not all([SUPABASE_URL, SUPABASE_KEY, HF_API_KEY]):
+    print("WARNING: Missing environment variables. Check your Render Dashboard.")
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ===========================
+# LlamaIndex Global Settings
+# ===========================
+# We must specify an embedding model, otherwise LlamaIndex 
+# will try to use OpenAI and crash on Render.
+Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+Settings.llm = None  # We are calling HuggingFace manually via API
+Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=20)
 
 # ===========================
 # Models
@@ -23,61 +37,71 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 class Query(BaseModel):
     question: str
 
-
 # ===========================
 # HuggingFace Call
 # ===========================
 async def call_hf_model(prompt: str):
-    endpoint = "https://api-inference.huggingface.co/models/gpt-oss-120b"
+    # Ensure this model ID is correct for the Inference API
+    endpoint = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
 
     async with httpx.AsyncClient(timeout=180) as client:
-        res = await client.post(endpoint, headers=headers,
-            json={"inputs": prompt}
-        )
-        return res.json()[0]["generated_text"]
-
+        try:
+            res = await client.post(endpoint, headers=headers, json={"inputs": prompt})
+            res.raise_for_status()
+            data = res.json()
+            # Standard HF Inference return is a list of dicts
+            if isinstance(data, list) and len(data) > 0:
+                return data[0].get("generated_text", "No response from model.")
+            return str(data)
+        except Exception as e:
+            return f"Error calling LLM: {str(e)}"
 
 # ===========================
 # Build LlamaIndex
 # ===========================
 def load_index():
+    # Corrected the table_name and supabase_client mapping
     vector_store = SupabaseVectorStore(
         supabase_client=supabase,
-        table_name="documents"
+        table_name="documents" # Ensure this matches your Supabase table name
     )
 
     storage_context = StorageContext.from_defaults(
         vector_store=vector_store
     )
 
+    # Reconstruct the index from the existing vector store
     index = VectorStoreIndex.from_vector_store(
         vector_store=vector_store,
         storage_context=storage_context
     )
     return index
 
-
-index = load_index()
-query_engine = index.as_query_engine(similarity_top_k=5)
-
+# Initialize index and engine globally
+try:
+    index = load_index()
+    query_engine = index.as_query_engine(similarity_top_k=5)
+except Exception as e:
+    print(f"Index Load Error: {e}")
+    index = None
 
 # ===========================
 # API Route
 # ===========================
 @app.post("/chat")
 async def rag_chat(q: Query):
-    retrieved = query_engine.query(q.question)
+    if not index:
+        raise HTTPException(status_code=500, detail="Index not initialized.")
 
-    final_prompt = f"""
-    Answer using context below.
+    # 1. Retrieve context using LlamaIndex
+    response = query_engine.query(q.question)
+    context_text = str(response)
 
-    Context:
-    {retrieved}
+    # 2. Build the final prompt for HuggingFace
+    final_prompt = f"Context: {context_text}\n\nQuestion: {q.question}\n\nAnswer:"
 
-    Question:
-    {q.question}
-    """
-
+    # 3. Get answer from HuggingFace
     answer = await call_hf_model(final_prompt)
-    return {"answer": answer}
+    
+    return {"answer": answer, "context_used": context_text}
