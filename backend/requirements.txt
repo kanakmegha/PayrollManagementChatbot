@@ -1,15 +1,16 @@
-# Fixed Networking (Do not change these)
-httpx==0.27.2
-supabase==2.9.0
-gotrue==2.8.1
-
-# LlamaIndex Pieces
-llama-index-core>=0.12.0
-llama-index-vector-stores-supabase>=0.3.0
-llama-index-embeddings-huggingface>=0.3.0
-llama-index-llms-openai>=0.3.0
-
-# Server
+# Web & Env
 fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
+
+# LlamaIndex (The new modular way)
+llama-index-core>=0.12.0
+llama-index-readers-file>=0.1.0
+llama-index-vector-stores-supabase>=0.3.0
+# THIS IS THE MISSING PIECE:
+llama-index-embeddings-huggingface>=0.3.0
+
+# Database & Proxy Fix (The original error we solved)
+httpx==0.27.2
+supabase==2.9.0
+gotrue==2.8.1
