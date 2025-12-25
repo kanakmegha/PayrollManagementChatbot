@@ -5,12 +5,16 @@ python-dotenv==1.0.0
 
 # 2. The Core AI Tools (Loosened to allow pip to find a match)
 llama-index>=0.12.0
-llama-index-core>=0.13.0
-llama-index-vector-stores-supabase>=0.4.0
+
 llama-index-embeddings-huggingface>=0.4.0
 
-# 3. CRITICAL: The Fix for the Supabase 'proxy' error
-# We MUST keep httpx pinned here to prevent the 'unexpected keyword argument' crash.
+# Specifically pin these to fix the 'proxy' error
 httpx==0.27.2
 supabase==2.9.0
 gotrue==2.8.1
+
+# Your other libraries
+fastapi==0.104.1
+uvicorn==0.24.0
+llama-index-core>=0.12.0
+llama-index-vector-stores-supabase>=0.3.0
