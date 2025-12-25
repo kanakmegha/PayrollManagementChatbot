@@ -1,16 +1,10 @@
-# Core Web Server
+# Specifically pin these to avoid the 'proxy' bug
+httpx==0.27.2
+gotrue==2.8.1
+supabase==2.9.0
+
+# Other dependencies
 fastapi==0.104.1
 uvicorn==0.24.0
-python-dotenv==1.0.0
-
-# Database & HTTP (CRITICAL FIX)
-# We pin httpx to 0.27.2 because 0.28.0 removed 'proxies' support
-httpx==0.27.2
-supabase==2.9.0
-gotrue==2.8.1
-
-# AI & LlamaIndex
 llama-index>=0.12.0
-llama-index-core>=0.12.0
 llama-index-vector-stores-supabase>=0.4.0
-llama-index-embeddings-huggingface>=0.4.0
