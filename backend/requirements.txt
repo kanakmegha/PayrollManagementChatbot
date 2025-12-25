@@ -1,13 +1,3 @@
-# 1. Web and Environment
-fastapi==0.104.1
-uvicorn==0.24.0
-python-dotenv==1.0.0
-
-# 2. The Core AI Tools (Loosened to allow pip to find a match)
-llama-index>=0.12.0
-
-llama-index-embeddings-huggingface>=0.4.0
-
 # Specifically pin these to fix the 'proxy' error
 httpx==0.27.2
 supabase==2.9.0
