@@ -6,9 +6,8 @@ function App() {
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ⚠️ Change this to your Render backend URL
-  const BACKEND_URL = "http://localhost:8000" | "https://payrollmanagementchatbot.onrender.com";
-
+  // ⚠️ Change this to your Render backend URL http://localhost:8000" 
+  const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
   const sendQuery = async () => {
     if (!query.trim()) return;
 
