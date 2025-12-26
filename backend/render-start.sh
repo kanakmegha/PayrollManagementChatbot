@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Exit on error
 set -o errexit
 
-echo "--- Starting Uvicorn Server ---"
+echo "--- Pre-Flight Check ---"
+# This confirms which httpx the STARTUP environment is actually seeing
+python -c "import httpx; print(f'STARTUP HTTPX VERSION: {httpx.__version__}')"
 
-# Render provides the $PORT environment variable automatically.
-# We must use 0.0.0.0 to allow external traffic.
-PORT=${PORT:-1000}
+echo "--- Starting Uvicorn Server ---"
+PORT=${PORT:-10000}
 python -m uvicorn main:app --host 0.0.0.0 --port $PORT
