@@ -1,13 +1,7 @@
-import os
+# --- EMERGENCY MONKEY PATCH MUST BE LINE 1 ---
 import httpx
-import sys
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from supabase import create_client
 
-# --- EMERGENCY MONKEY PATCH START ---
 try:
-    import httpx
     if hasattr(httpx, "Client"):
         original_init = httpx.Client.__init__
         def patched_init(self, *args, **kwargs):
@@ -21,10 +15,17 @@ try:
             kwargs.pop("proxy", None)
             return original_async_init(self, *args, **kwargs)
         httpx.AsyncClient.__init__ = patched_async_init
-    print("--- DEBUG: HTTPX Monkey Patch Applied ---")
+    print("--- DEBUG: HTTPX Monkey Patch Applied Successfully ---")
 except Exception as e:
     print(f"--- DEBUG: Patch Failed: {e} ---")
-# --- EMERGENCY MONKEY PATCH END ---
+
+import os
+
+import sys
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from supabase import create_client
+
 
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.supabase import SupabaseVectorStore
