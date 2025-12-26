@@ -4,19 +4,32 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 
+import sys
 
-# This is a 'Monkey Patch'
-# It forces the new version of httpx to accept the 'proxy' argument without crashing
-if not hasattr(httpx, "Client"):
-    pass 
-else:
-    original_init = httpx.Client.__init__
-    def patched_init(self, *args, **kwargs):
-        # If 'proxy' is in the arguments, remove it so it doesn't crash
-        kwargs.pop("proxy", None)
-        return original_init(self, *args, **kwargs)
-    httpx.Client.__init__ = patched_init
-# Modular LlamaIndex Imports (v0.10+)
+# --- EMERGENCY MONKEY PATCH START ---
+# This fixes the 'proxy' error by forcing httpx to ignore that argument
+try:
+    import httpx
+    if hasattr(httpx, "Client"):
+        original_init = httpx.Client.__init__
+        def patched_init(self, *args, **kwargs):
+            kwargs.pop("proxy", None) # Remove the problematic argument
+            return original_init(self, *args, **kwargs)
+        httpx.Client.__init__ = patched_init
+        
+    if hasattr(httpx, "AsyncClient"):
+        original_async_init = httpx.AsyncClient.__init__
+        def patched_async_init(self, *args, **kwargs):
+            kwargs.pop("proxy", None)
+            return original_async_init(self, *args, **kwargs)
+        httpx.AsyncClient.__init__ = patched_async_init
+    print("--- DEBUG: HTTPX Monkey Patch Applied ---")
+except Exception as e:
+    print(f"--- DEBUG: Patch Failed: {e} ---")
+# --- EMERGENCY MONKEY PATCH END ---
+
+from fastapi import FastAPI
+# ... rest of your imports and create_client code
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.supabase import SupabaseVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
