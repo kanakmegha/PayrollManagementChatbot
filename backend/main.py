@@ -4,6 +4,18 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 
+
+# This is a 'Monkey Patch'
+# It forces the new version of httpx to accept the 'proxy' argument without crashing
+if not hasattr(httpx, "Client"):
+    pass 
+else:
+    original_init = httpx.Client.__init__
+    def patched_init(self, *args, **kwargs):
+        # If 'proxy' is in the arguments, remove it so it doesn't crash
+        kwargs.pop("proxy", None)
+        return original_init(self, *args, **kwargs)
+    httpx.Client.__init__ = patched_init
 # Modular LlamaIndex Imports (v0.10+)
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.supabase import SupabaseVectorStore
