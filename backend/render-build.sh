@@ -5,13 +5,14 @@ set -o errexit
 echo "--- Upgrading Pip ---"
 python -m pip install --upgrade pip
 
-echo "--- Fixing HTTPX/Supabase Proxy Conflict ---"
-# Force remove any cached/pre-installed version that causes the 'proxy' error
+echo "--- Installing All Requirements ---"
+# We install everything first
+pip install --no-cache-dir -r requirements.txt
+
+echo "--- FORCE FIX: Downgrading HTTPX ---"
+# We do this LAST to make sure nothing else upgrades it back to 0.28.0
 pip uninstall -y httpx
 pip install "httpx==0.27.2"
 
-echo "--- Installing Requirements ---"
-# Use --no-cache-dir to ensure we get a fresh, clean install
-pip install --no-cache-dir -r requirements.txt
-
-echo "--- Build Script Finished ---"
+echo "--- VERIFYING VERSION ---"
+python -c "import httpx; print(f'VERIFIED HTTPX VERSION: {httpx.__version__}')"
