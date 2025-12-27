@@ -7,14 +7,16 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   // ⚠️ Change this to your Render backend URL http://localhost:8000" 
-  const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
+  //const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
+  const BACKEND_URL = "http://localhost:8000";
   const sendQuery = async () => {
     if (!query.trim()) return;
 
     setLoading(true);
 
     try {
-      const res = await axios.post(`${BACKEND_URL}/query`, { query });
+      // Change this line in sendQuery:
+      const res = await axios.post(`${BACKEND_URL}/chat`, { question: query });
       setResponse(res.data.answer);
     } catch (err) {
       setResponse("Error: Backend not reachable");
