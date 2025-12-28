@@ -108,9 +108,20 @@ async def chat(request_data: ChatRequest):
         payload = {
             "model": "meta-llama/Llama-3.1-8B-Instruct",
             "messages": [
-                {"role": "system", "content": f"You are a payroll assistant. Use this context: {context}"},
-                {"role": "user", "content": request_data.question}
-            ],
+            {
+                "role": "system", 
+            "content": (
+            "You are a strict company payroll assistant. "
+            "Use ONLY the provided context to answer. "
+            "If the context says 'No relevant payroll documents found', "
+            "unapologetically state that you do not have access to that information. "
+            "DO NOT use your general knowledge about payroll cycles in the US or other countries."
+            f"\n\nCONTEXT:\n{context}"
+            )
+        },
+        {"role": "user", "content": request_data.question}
+        ],
+            "temperature": 0.0,  # Add this! It makes the AI less likely to 'guess'
             "max_tokens": 500
         }
 
