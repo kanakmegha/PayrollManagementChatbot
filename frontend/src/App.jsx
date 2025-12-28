@@ -36,24 +36,28 @@ function App() {
   return (
     <div style={{ 
       height: '100vh', 
+      width: '100vw',  // Ensure it covers the full width
       background: 'linear-gradient(135deg, #e0e7ff 0%, #f3f4f6 100%)',
       display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center',
-      padding: '20px'
+      flexDirection: 'column', // Stack children vertically
+      justifyContent: 'center', // Centers horizontally in a flex-column
+      alignItems: 'center',     // Centers horizontally in a flex-row/column
+      padding: '20px',
+      boxSizing: 'border-box',
+      overflow: 'hidden'       // Prevent the body from scrolling
     }}>
+      {/* Your Chat Card Container */}
       <div style={{ 
         width: '100%', 
-        maxWidth: '500px', 
-        height: '80vh',
-        backgroundColor: 'rgba(255, 255, 255, 0.7)',
-        backdropFilter: 'blur(12px)',
-        borderRadius: '24px',
+        maxWidth: '550px', // Limits the width so it looks like a chat window
+        height: '85vh',
+        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+        backdropFilter: 'blur(15px)',
+        borderRadius: '28px',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '0 8px 32px rgba(31, 38, 135, 0.15)',
-        border: '1px solid rgba(255, 255, 255, 0.3)',
-        overflow: 'hidden'
+        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.1)',
+        border: '1px solid rgba(255, 255, 255, 0.4)',
       }}>
         {/* Header */}
         <div style={{ padding: '20px', textAlign: 'center', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
