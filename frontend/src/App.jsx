@@ -21,8 +21,8 @@ function App() {
   const scrollRef = useRef(null);
 
 
-
-  const BACKEND_URL = "http://localhost:8000";
+//locally backend url is http://localhost:8000/
+  const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
 
 
 
