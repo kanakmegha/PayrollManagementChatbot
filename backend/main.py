@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 app = FastAPI()
 
-# Enable CORS for your frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,20 +17,16 @@ app.add_middleware(
 
 HF_TOKEN = os.getenv("HF_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY") # Use Service Role for better reliability
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ ERROR: Supabase environment variables are MISSING!")
-    print(f"URL found: {bool(SUPABASE_URL)}, KEY found: {bool(SUPABASE_KEY)}")
-else:
-    print("✅ Environment variables loaded successfully.")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # Service role key recommended
+
+if not all([HF_TOKEN, SUPABASE_URL, SUPABASE_KEY]):
+    raise RuntimeError("Missing required environment variables!")
+
 class ChatRequest(BaseModel):
     question: str
 
-def get_embedding(text):
-    """
-    MATCHES EDGE FUNCTION: Uses BAAI/bge-small-en-v1.5
-    """
-    # Using the same router logic as your Edge Function
+def get_embedding(text: str):
+    """Matches your Edge Function exactly"""
     url = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
     
     headers = {
@@ -41,94 +36,98 @@ def get_embedding(text):
     
     payload = {"inputs": text}
     
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
     
-    if response.status_code != 200:
-        raise Exception(f"Hugging Face Embedding failed: {response.text}")
-        
-    return response.json()
+    if not response.ok:
+        raise Exception(f"Embedding failed ({response.status_code}): {response.text}")
+    
+    data = response.json()
+    if isinstance(data, list) and len(data) == 1:
+        return data[0]  # Sometimes returns [[...]]
+    return data
 
 def search_supabase(embedding):
-    """
-    Queries the RPC function in Supabase with the REQUIRED headers.
-    """
+    """Calls your match_documents RPC – ensure it returns similarity"""
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
     
-    # WE MUST SEND BOTH 'apikey' AND 'Authorization'
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"  # Helps get full response
     }
     
     payload = {
         "query_embedding": embedding,
-        "match_threshold": 0.1, # Keep it low for testing
-        "match_count": 3
+        "match_threshold": 0.78,   # bge-small: 0.75–0.85 typical for good matches
+        "match_count": 10
     }
     
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        
-        if response.status_code != 200:
-            print(f"Supabase Search Error: {response.status_code} - {response.text}")
-            return []
-            
-        return response.json()
-    except Exception as e:
-        print(f"Supabase Connection Error: {e}")
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    
+    if not response.ok:
+        print(f"Supabase RPC error ({response.status_code}): {response.text}")
         return []
+    
+    return response.json()
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
-        print(f"--- Incoming Question: {request_data.question} ---")
+        print(f"--- Question: {request_data.question} ---")
         
-        # 1. Get Embedding
-        vector = get_embedding(request_data.question)
-        print(f"DEBUG: Vector generated. Length: {len(vector)}")
+        # 1. Embed question
+        embedding = get_embedding(request_data.question)
+        print(f"Embedding generated (dim: {len(embedding)})")
 
-        # 2. Search Supabase
-        matches = search_supabase(vector)
-        print(f"DEBUG: Supabase returned {len(matches)} matches.")
+        # 2. Retrieve relevant chunks
+        matches = search_supabase(embedding)
+        print(f"Found {len(matches)} relevant chunks")
+
+        if matches:
+            for i, m in enumerate(matches[:3]):
+                sim = m.get("similarity", "?")
+                content_snip = m.get("content", "")[:100]
+                print(f"Match {i+1} [sim={sim:.3f}]: {content_snip}...")
         
-        if len(matches) > 0:
-            for i, m in enumerate(matches):
-                print(f"Match {i+1}: Similarity {m.get('similarity')} | Content: {m.get('content')[:50]}...")
-
-        # 3. Context Construction
+        # 3. Build context
         if not matches:
-            context = "No relevant payroll documents found."
+            context = "No relevant payroll information found in uploaded documents."
         else:
-            context = "\n".join([m.get("content", "") for m in matches])
+            context = "\n\n".join([m["content"] for m in matches])
 
-        # 4. LLM Call
-        url = "https://router.huggingface.co/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+        # 4. Call LLM – CORRECTED endpoint + base_url style
+        llm_url = "https://router.huggingface.co/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {HF_TOKEN}",
+            "Content-Type": "application/json"
+        }
         payload = {
-            "model": "meta-llama/Llama-3.1-8B-Instruct",
+            "model": "meta-llama/Llama-3.1-8B-Instruct",  # Must be exact model ID
             "messages": [
-            {
-                "role": "system", 
-            "content": (
-            "You are a strict company payroll assistant. "
-            "Use ONLY the provided context to answer. "
-            "If the context says 'No relevant payroll documents found', "
-            "unapologetically state that you do not have access to that information. "
-            "DO NOT use your general knowledge about payroll cycles in the US or other countries."
-            f"\n\nCONTEXT:\n{context}"
-            )
-        },
-        {"role": "user", "content": request_data.question}
-        ],
-            "temperature": 0.0,  # Add this! It makes the AI less likely to 'guess'
-            "max_tokens": 500
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful payroll assistant. Answer ONLY using the provided context. "
+                        "If the information is not in the context, say you don't have access to that data. "
+                        "Be concise and professional.\n\nCONTEXT:\n" + context
+                    )
+                },
+                {"role": "user", "content": request_data.question}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 512
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        answer = response.json()["choices"][0]["message"]["content"]
+        response = requests.post(llm_url, headers=headers, json=payload, timeout=60)
         
-        print(f"--- AI Answer Generated ---")
+        if not response.ok:
+            error_msg = response.text[:200]
+            print(f"LLM failed ({response.status_code}): {error_msg}")
+            raise Exception(f"LLM generation failed: {response.status_code}")
+
+        answer = response.json()["choices"][0]["message"]["content"].strip()
+        print("--- Answer generated ---")
         return {"answer": answer}
 
     except Exception as e:
