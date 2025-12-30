@@ -103,7 +103,7 @@ async def chat(request_data: ChatRequest):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "meta-llama/Llama-3.1-8B-Instruct",  # Must be exact model ID
+            "model": "HuggingFaceH4/zephyr-7b-beta",  # Must be exact model ID
             "messages": [
                 {
                     "role": "system",
