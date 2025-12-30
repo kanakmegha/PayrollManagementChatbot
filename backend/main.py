@@ -116,7 +116,7 @@ async def chat(request_data: ChatRequest):
                 {"role": "user", "content": request_data.question}
             ],
             "temperature": 0.1,
-            "max_tokens": 512
+            "max_tokens": 200
         }
 
         response = requests.post(llm_url, headers=headers, json=payload, timeout=60)
