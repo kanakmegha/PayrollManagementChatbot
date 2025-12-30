@@ -14,27 +14,65 @@ const ChatInterface = () => {
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!input.trim()) return;
 
-    const userMessage = { role: 'user', text: input };
-    setMessages(prev => [...prev, userMessage]);
+    if (!input.trim() || loading) return;
+
+
+
+    setMessages(prev => [...prev, { role: 'user', text: input }]);
+
     setInput('');
+
     setLoading(true);
 
+
+
     try {
-      const response = await fetch('https://payrollmanagementchatbot.onrender.com/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: input }),
-      });
-      const data = await response.json();
+
+      // 1. Ensure you use the RENDER URL
+
+      const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com/chat";
+
       
+
+      const response = await fetch(BACKEND_URL, {
+
+        method: 'POST',
+
+        headers: { 'Content-Type': 'application/json' },
+
+        body: JSON.stringify({ question: input }),
+
+        // 2. Remove any hardcoded browser timeouts or set them to 60s
+
+      });
+
+
+
+      if (!response.ok) throw new Error("Server is waking up...");
+
+
+
+      const data = await response.json();
+
       setMessages(prev => [...prev, { role: 'ai', text: data.answer }]);
+
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'ai', text: 'Error connecting to the server.' }]);
+
+      setMessages(prev => [...prev, { 
+
+        role: 'ai', 
+
+        text: 'Server is waking up from sleep mode. Please wait 30 seconds and try again!' 
+
+      }]);
+
     } finally {
+
       setLoading(false);
+
     }
+
   };
 
   return (
