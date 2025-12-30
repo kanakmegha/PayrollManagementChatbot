@@ -59,7 +59,7 @@ def search_supabase(embedding):
     
     payload = {
         "query_embedding": embedding,
-        "match_threshold": 0.78,   # bge-small: 0.75–0.85 typical for good matches
+        "match_threshold": 0.5,   # bge-small: 0.75–0.85 typical for good matches
         "match_count": 3
     }
     
