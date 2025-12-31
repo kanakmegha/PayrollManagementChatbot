@@ -103,7 +103,7 @@ async def chat(request_data: ChatRequest):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "mistralai/Mistral-7B-Instruct-v0.3",  # Must be exact model ID
+            "model": "mistralai/Mistral-7B-Instruct-v0.3:hf-inference",  # Must be exact model ID
             "messages": [
                 {
                     "role": "system",
