@@ -58,43 +58,30 @@ async def chat(request_data: ChatRequest):
     try:
         embedding = get_embedding(request_data.question)
         matches = search_supabase(embedding)
-        context = "\n".join([m["content"] for m in matches]) if matches else "No records found."
+        context = "\n".join([m["content"] for m in matches]) if matches else ""
 
         llm_url = "https://router.huggingface.co/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
-        # Replace the payload in your /chat endpoint with this:
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
         payload = {
             "model": "mistralai/Mistral-7B-Instruct-v0.3",
-            "messages": [
-                {"role": "system", "content": f"Context: {context}"},
-                {"role": "user", "content": request_data.question}
-                ],
-                "parameters": {
-                "max_new_tokens": 200,
-                "temperature": 0.1
-                },
-                "options": {
-                "wait_for_model": True  # <--- THIS IS THE KEY
-            }
+            "messages": [{"role": "system", "content": f"Context: {context}"}, 
+                         {"role": "user", "content": request_data.question}]
         }
 
-        # --- SMART RETRY LOGIC ---
-        response = requests.post(llm_url, headers=headers, json=payload, timeout=60)
-        
-        # If model is loading (Status 503), wait 15 seconds and try ONE more time
+        response = requests.post(llm_url, headers=headers, json=payload, timeout=10)
+
+        # If model is loading, tell the frontend to wait
         if response.status_code == 503:
-            print("Model is waking up... waiting 15 seconds...")
-            time.sleep(15)
-            response = requests.post(llm_url, headers=headers, json=payload, timeout=60)
+            return {"status": "loading", "message": "Model is waking up", "estimated_time": 20}
 
         if not response.ok:
-            return {"answer": "I'm still waking up my brain cells. Please ask again in a moment!"}
+            raise Exception("AI Error")
 
-        result = response.json()
-        return {"answer": result["choices"][0]["message"]["content"]}
+        answer = response.json()["choices"][0]["message"]["content"]
+        return {"status": "success", "answer": answer}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
