@@ -59,9 +59,10 @@ async def chat(request_data: ChatRequest):
 
         # 2. Retrieve payroll facts
         matches = search_supabase(embedding)
-        context = "\n".join([m["content"] for m in matches]) if matches else "No data found."
+        context = "\n".join([m["content"] for m in matches]) if matches else "No payroll data found."
 
-        # 3. Generate answer using Mistral
+        # 3. Generate answer using Mistral (V1 Chat URL)
+        # Note the "/v1/chat/completions" at the end - this is critical!
         llm_url = "https://router.huggingface.co/v1/chat/completions"
         headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
         
@@ -70,23 +71,35 @@ async def chat(request_data: ChatRequest):
             "messages": [
                 {
                     "role": "system", 
-                    "content": (
-                        "You are a professional payroll assistant. Answer ONLY using the provided context. "
-                        "If the info is missing, say you don't know. Be concise.\n\n"
-                        f"CONTEXT:\n{context}"
-                    )
+                    "content": f"You are a payroll assistant. Use only this data:\n{context}"
                 },
                 {"role": "user", "content": request_data.question}
             ],
+            "max_tokens": 500,
             "temperature": 0.1
         }
 
         response = requests.post(llm_url, headers=headers, json=payload, timeout=60)
-        answer = response.json()["choices"][0]["message"]["content"]
+        
+        # Check if HF returned an error before trying to read 'choices'
+        if not response.ok:
+            print(f"HF API Error: {response.text}")
+            return {"answer": "The AI is currently busy. Please try again in 10 seconds."}
+
+        res_json = response.json()
+        
+        # Safe check for the 'choices' key
+        if "choices" in res_json:
+            answer = res_json["choices"][0]["message"]["content"]
+        else:
+            # Fallback if the model returned a different format
+            print(f"Unexpected HF Response: {res_json}")
+            answer = "I received an unexpected response format from the AI provider."
         
         return {"answer": answer}
 
     except Exception as e:
+        print(f"CRITICAL ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
