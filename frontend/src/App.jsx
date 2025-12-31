@@ -8,7 +8,7 @@ function App() {
   ]);
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
-
+  //const BACKEND_URL = "http://127.0.0.1:8000/";
   const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
 
   useEffect(() => {
