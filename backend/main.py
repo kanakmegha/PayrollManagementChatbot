@@ -62,10 +62,20 @@ async def chat(request_data: ChatRequest):
 
         llm_url = "https://router.huggingface.co/v1/chat/completions"
         headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+        # Replace the payload in your /chat endpoint with this:
         payload = {
             "model": "mistralai/Mistral-7B-Instruct-v0.3",
-            "messages": [{"role": "system", "content": f"Context: {context}"}, 
-                         {"role": "user", "content": request_data.question}]
+            "messages": [
+                {"role": "system", "content": f"Context: {context}"},
+                {"role": "user", "content": request_data.question}
+                ],
+                "parameters": {
+                "max_new_tokens": 200,
+                "temperature": 0.1
+                },
+                "options": {
+                "wait_for_model": True  # <--- THIS IS THE KEY
+            }
         }
 
         # --- SMART RETRY LOGIC ---
