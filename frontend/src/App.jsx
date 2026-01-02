@@ -27,46 +27,51 @@ function App() {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  const sendQuery = async (retryText = null) => {
-    const textToSearch = retryText || query;
-    if (!textToSearch.trim() || loading) return;
-
-    // Only add user message to UI if it's the first attempt (not a retry)
-    if (!retryText) {
-      setMessages((prev) => [...prev, { role: 'user', text: textToSearch }]);
-      setQuery("");
-    }
-    
+  const sendQuery = async () => {
+    if (!query.trim() || loading) return;
+  
+    const userMsg = { role: 'user', text: query };
+    setMessages((prev) => [...prev, userMsg]);
+    const currentQuery = query;
+    setQuery("");
     setLoading(true);
-
+  
+    // Add an empty AI message that we will "fill" as the stream arrives
+    setMessages((prev) => [...prev, { role: 'ai', text: "" }]);
+  
     try {
-      const res = await axios.post(`${BACKEND_URL}/chat`, 
-        { question: textToSearch },
-        { timeout: 60000 } 
-      );
-
-      // Check if backend returned the "loading" status we set up
-      if (res.data.status === "loading") {
-        setCountdown(res.data.estimated_time || 20);
-        // Wait for the countdown to finish, then auto-retry
-        setTimeout(() => {
-          sendQuery(textToSearch); 
-        }, (res.data.estimated_time || 20) * 1000);
+      const response = await fetch(`${BACKEND_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: currentQuery }),
+      });
+  
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+  
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+  
+        const chunk = decoder.decode(value, { stream: true });
         
-        return; // Don't turn off loading yet
+        // Chunks come in as: {"answer": "Hello"}\n{"answer": " world"}
+        const lines = chunk.split("\n").filter(line => line.trim());
+        
+        for (const line of lines) {
+          const parsed = JSON.parse(line);
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const lastMsg = newMessages[newMessages.length - 1];
+            lastMsg.text += parsed.answer; // Append the new word
+            return newMessages;
+          });
+        }
       }
-
-      setMessages((prev) => [...prev, { role: 'ai', text: res.data.answer }]);
-      setLoading(false);
     } catch (err) {
-      // If the model is sleeping (503) or request timed out
-      if (err.response?.status === 503 || err.code === 'ECONNABORTED') {
-        setCountdown(25); // Set a default 25s wake-up timer
-        setTimeout(() => sendQuery(textToSearch), 25000);
-      } else {
-        setMessages((prev) => [...prev, { role: 'ai', text: "Connection error. Please check your internet." }]);
-        setLoading(false);
-      }
+      console.error("Streaming error:", err);
+    } finally {
+      setLoading(false);
     }
   };
 
