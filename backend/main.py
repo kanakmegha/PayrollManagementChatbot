@@ -49,7 +49,7 @@ def search_supabase(embedding):
     payload = {
         "query_embedding": embedding,
         "match_threshold": 0.4,
-        "match_count": 3 # Reduced count for faster context processing
+        "match_count": 20 # Reduced count for faster context processing
     }
     response = requests.post(url, headers=headers, json=payload, timeout=30)
     return response.json() if response.ok else []
