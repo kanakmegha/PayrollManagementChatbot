@@ -21,28 +21,41 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 class ChatRequest(BaseModel):
     question: str
-
-def get_embedding(text: str):
-    url = "https://api-inference.huggingface.co/models/BAAI/bge-small-en-v1.5"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    response = requests.post(url, headers=headers, json={"inputs": text})
-    return response.json()[0] if response.ok else None
-
 def search_supabase(embedding):
+    # NOW we use the SUPABASE_URL
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    # We increase match_count so the LLM "sees" more employees
     payload = {
         "query_embedding": embedding,
-        "match_threshold": 0.3, 
-        "match_count": 15 
+        "match_threshold": 0.3,
+        "match_count": 10
     }
     response = requests.post(url, headers=headers, json=payload)
     return response.json() if response.ok else []
+def get_embedding(text: str):
+    # Standard Inference API URL
+    url = "https://api-inference.huggingface.co/models/BAAI/bge-small-en-v1.5"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+    
+    # We add options to force the API to wait for the model to load
+    payload = {
+        "inputs": text,
+        "options": {"wait_for_model": True}
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    
+    if not response.ok:
+        # This will show up in your Render logs
+        print(f"HF Embedding Error: {response.status_code} - {response.text}")
+        raise Exception(f"HF Error: {response.text}")
+    
+    data = response.json()
+    return data[0] if isinstance(data[0], list) else data
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
