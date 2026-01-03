@@ -38,7 +38,7 @@ def search_supabase(embedding):
     return response.json() if response.ok else []
 def get_embedding(text: str):
     # Standard Inference API URL
-    url = "https://api-inference.huggingface.co/models/BAAI/bge-small-en-v1.5"
+    url = "https://router.huggingface.com/models/BAAI/bge-small-en-v1.5"
     headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
     
     # We add options to force the API to wait for the model to load
