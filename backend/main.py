@@ -1,12 +1,9 @@
 import os
-import json
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from groq import Groq  # Make sure to run: pip install groq
 
 load_dotenv()
 app = FastAPI()
@@ -18,26 +15,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Standardize environment variables
-HF_TOKEN = os.getenv("HF_API_KEY") # Used for embeddings
+HF_TOKEN = os.getenv("HF_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-# Initialize Groq Client
-groq_client = Groq(api_key=GROQ_API_KEY)
 
 class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    url = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
-    response = requests.post(url, headers=headers, json={"inputs": text}, timeout=30)
-    if not response.ok:
-        raise Exception(f"Embedding failed: {response.text}")
-    data = response.json()
-    return data[0] if isinstance(data[0], list) else data
+    url = "https://api-inference.huggingface.co/models/BAAI/bge-small-en-v1.5"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    response = requests.post(url, headers=headers, json={"inputs": text})
+    return response.json()[0] if response.ok else None
 
 def search_supabase(embedding):
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
@@ -46,12 +35,13 @@ def search_supabase(embedding):
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
+    # We increase match_count so the LLM "sees" more employees
     payload = {
         "query_embedding": embedding,
-        "match_threshold": 0.4,
-        "match_count": 20 # Reduced count for faster context processing
+        "match_threshold": 0.3, 
+        "match_count": 15 
     }
-    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    response = requests.post(url, headers=headers, json=payload)
     return response.json() if response.ok else []
 
 @app.post("/chat")
@@ -59,37 +49,42 @@ async def chat(request_data: ChatRequest):
     try:
         # 1. Get knowledge from Supabase
         embedding = get_embedding(request_data.question)
+        if not embedding:
+            return {"answer": "Error: Could not generate embedding."}
+
         matches = search_supabase(embedding)
-        context = "\n".join([m["content"] for m in matches]) if matches else "No payroll records found."
+        context = "\n".join([m["content"] for m in matches])
+        
+        # 2. Ask Llama-3.2-1B (Direct Inference, No Streaming)
+        # This is the model you used in your other project
+        llm_url = "https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-1B-Instruct"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+        
+        prompt = f"""Use the following payroll data to answer the question. 
+        If you don't know, say you don't know.
+        
+        Context:
+        {context}
+        
+        Question: {request_data.question}
+        Answer:"""
 
-        # 2. Define the Streaming Generator
-        async def stream_generator():
-            # Use Llama-3-8b on Groq for lightning-fast speeds
-            stream = groq_client.chat.completions.create(
-                model="llama3-8b-8192",
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": f"You are a payroll assistant. Use only this context:\n{context}"
-                    },
-                    {"role": "user", "content": request_data.question}
-                ],
-                stream=True,
-            )
+        payload = {
+            "inputs": prompt,
+            "parameters": {"max_new_tokens": 250, "temperature": 0.1}
+        }
 
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    # We wrap in JSON so the frontend can easily parse it
-                    yield json.dumps({"answer": content}) + "\n"
+        response = requests.post(llm_url, headers=headers, json=payload)
+        result = response.json()
 
-        return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
+        # Handle the specific way Llama-1B returns data on HF
+        if isinstance(result, list) and len(result) > 0:
+            full_text = result[0].get("generated_text", "")
+            # Remove the prompt from the answer if the model includes it
+            answer = full_text.split("Answer:")[-1].strip()
+            return {"status": "success", "answer": answer}
+        else:
+            return {"status": "error", "message": str(result)}
 
     except Exception as e:
-        print(f"Error: {e}")
-        # Fallback to a standard JSON error if streaming fails to start
         return {"status": "error", "message": str(e)}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
