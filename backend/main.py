@@ -60,44 +60,51 @@ def get_embedding(text: str):
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
-        # 1. Get knowledge from Supabase
-        embedding = get_embedding(request_data.question)
-        if not embedding:
-            return {"answer": "Error: Could not generate embedding."}
+        # 1. Get Embeddings (Keep this part as it was)
+        vector = get_embedding(request_data.question)
+        if not vector:
+            return {"status": "error", "message": "Embedding generation failed."}
 
-        matches = search_supabase(embedding)
-        context = "\n".join([m["content"] for m in matches])
-        
-        # 2. Ask Llama-3.2-1B (Direct Inference, No Streaming)
-        # This is the model you used in your other project
-        llm_url = "https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-1B-Instruct"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
-        
-        prompt = f"""Use the following payroll data to answer the question. 
-        If you don't know, say you don't know.
-        
-        Context:
-        {context}
-        
-        Question: {request_data.question}
-        Answer:"""
+        # 2. Search Supabase
+        matches = search_supabase(vector)
+        context = "\n".join([m["content"] for m in matches]) if matches else "No data found."
 
-        payload = {
-            "inputs": prompt,
-            "parameters": {"max_new_tokens": 250, "temperature": 0.1}
+        # 3. Use the ROUTER URL with the correct Chat Format
+        # This is the endpoint Hugging Face wants you to use
+        llm_url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
+        
+        headers = {
+            "Authorization": f"Bearer {HF_TOKEN}",
+            "Content-Type": "application/json"
         }
 
-        response = requests.post(llm_url, headers=headers, json=payload)
-        result = response.json()
+        # The Router requires the "messages" format (OpenAI style)
+        payload = {
+            "model": "meta-llama/Llama-3.2-1B-Instruct",
+            "messages": [
+                {
+                    "role": "system", 
+                    "content": f"You are a payroll assistant. Use only this data: {context}"
+                },
+                {
+                    "role": "user", 
+                    "content": request_data.question
+                }
+            ],
+            "max_tokens": 500,
+            "stream": False # Set to False for now to verify it works in Swagger
+        }
 
-        # Handle the specific way Llama-1B returns data on HF
-        if isinstance(result, list) and len(result) > 0:
-            full_text = result[0].get("generated_text", "")
-            # Remove the prompt from the answer if the model includes it
-            answer = full_text.split("Answer:")[-1].strip()
+        response = requests.post(llm_url, headers=headers, json=payload, timeout=30)
+
+        if response.status_code == 200:
+            result = response.json()
+            # Extract the message correctly from the OpenAI-style response
+            answer = result['choices'][0]['message']['content']
             return {"status": "success", "answer": answer}
         else:
-            return {"status": "error", "message": str(result)}
+            # This will show the actual error message from HF in your backend
+            return {"status": "error", "message": f"HF Router Error: {response.text}"}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
