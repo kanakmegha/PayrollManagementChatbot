@@ -62,7 +62,7 @@ async def chat(request_data: ChatRequest):
         final_context = summary_info + context_data
 
         # --- HUMAN-LIKE SYSTEM PROMPT ---
-       system_instruction = """
+        system_instruction = """
         You are a friendly and efficient HR Assistant. 
         Your goal is to provide quick, natural answers as if you are talking to a teammate.
 
