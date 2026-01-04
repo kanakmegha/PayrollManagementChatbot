@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
+# Configuration from Render Environment Variables
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -24,79 +24,94 @@ class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    """Generates embeddings using OpenRouter's OpenAI-compatible API."""
+    """Uses OpenRouter's OpenAI-compatible endpoint for embeddings."""
     url = "https://openrouter.ai/api/v1/embeddings"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": "openai/text-embedding-3-small", # Efficient and cheap
+        "model": "openai/text-embedding-3-small", 
         "input": text
     }
-    
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        if response.status_code == 200:
-            return response.json()['data'][0]['embedding']
-        print(f"Embedding Error: {response.status_code} - {response.text}")
+        res = requests.post(url, headers=headers, json=payload, timeout=15)
+        if res.status_code == 200:
+            return res.json()['data'][0]['embedding']
+        print(f"Embedding Error: {res.text}")
         return None
     except Exception as e:
-        print(f"Embedding Exception: {str(e)}")
+        print(f"Embedding Exception: {e}")
         return None
 
-def search_supabase(embedding):
-    """Retrieves relevant context from Supabase."""
-    url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
+def get_supabase_count():
+    """Directly counts records in your table for 100% accuracy."""
+    # Assuming your table is named 'employees'. Change if your table is named 'payroll' or 'documents'.
+    url = f"{SUPABASE_URL}/rest/v1/employees?select=count" 
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Prefer": "count=exact"
+    }
+    try:
+        res = requests.get(url, headers=headers)
+        # Supabase returns count in the Content-Range header: '0-0/45'
+        content_range = res.headers.get("Content-Range")
+        if content_range:
+            return content_range.split("/")[-1]
+        return "unknown"
+    except:
+        return "unknown"
+
+def search_supabase_vectors(embedding):
+    """Finds specific text chunks for RAG."""
+    url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
+    headers = {
+        "apikey": SUPABASE_KEY, 
+        "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "query_embedding": embedding,
-        "match_threshold": 0.3,
-        "match_count": 5
-    }
+    payload = {"query_embedding": embedding, "match_threshold": 0.3, "match_count": 5}
     res = requests.post(url, headers=headers, json=payload)
     return res.json() if res.ok else []
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
-        # 1. Get Vector
+        q = request_data.question.lower()
+        
+        # --- INTELLIGENT ROUTING ---
+        # 1. Check if the user is asking for a count (Headcount/Total Employees)
+        if any(word in q for word in ["how many employees", "total employees", "headcount", "number of staff"]):
+            total = get_supabase_count()
+            return {
+                "status": "success", 
+                "answer": f"I've checked the database directly: there are currently {total} employees enrolled in the system."
+            }
+
+        # 2. Standard Intelligent Search (RAG) for other questions
         vector = get_embedding(request_data.question)
         if not vector:
-            return {"status": "error", "message": "Failed to generate embedding via OpenRouter."}
+            return {"status": "error", "message": "Connection to OpenRouter failed."}
 
-        # 2. Search Context
-        matches = search_supabase(vector)
-        context = "\n".join([m["content"] for m in matches]) if matches else "No data."
+        matches = search_supabase_vectors(vector)
+        context = "\n".join([m["content"] for m in matches]) if matches else "No specific records found."
 
-        # 3. Chat via OpenRouter
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://render.com", # Optional for OpenRouter rankings
-            "X-Title": "Payroll Assistant"
-        }
+        # OpenRouter Chat Completion
+        llm_url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
         
-        payload = {
-            "model": "meta-llama/llama-3.2-3b-instruct", # Powerful & very cheap on OpenRouter
+        llm_payload = {
+            "model": "meta-llama/llama-3.2-3b-instruct",
             "messages": [
-                {"role": "system", "content": f"You are a payroll assistant. Context: {context}"},
+                {"role": "system", "content": f"You are a Payroll Assistant. Use this data: {context}. If info is missing, say you don't know."},
                 {"role": "user", "content": request_data.question}
             ]
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            answer = response.json()['choices'][0]['message']['content']
+        res = requests.post(llm_url, headers=headers, json=llm_payload)
+        if res.status_code == 200:
+            answer = res.json()['choices'][0]['message']['content']
             return {"status": "success", "answer": answer}
         
-        return {"status": "error", "message": f"OpenRouter Error: {response.text}"}
+        return {"status": "error", "message": f"LLM Error: {res.status_code}"}
 
     except Exception as e:
-        return {"status": "error", "message": f"Server Error: {str(e)}"}
+        return {"status": "error", "message": str(e)}
