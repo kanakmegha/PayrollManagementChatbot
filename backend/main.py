@@ -44,7 +44,7 @@ def get_embedding(text: str):
 def get_supabase_count():
     """Directly counts records in your table for 100% accuracy."""
     # Assuming your table is named 'employees'. Change if your table is named 'payroll' or 'documents'.
-    url = f"{SUPABASE_URL}/rest/v1/employees?select=count" 
+    url = f"{SUPABASE_URL}/rest/v1/documents?select=count" 
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
