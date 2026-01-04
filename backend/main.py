@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration from Render Environment Variables
+# Configuration
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -24,89 +24,78 @@ class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    """Uses OpenRouter's OpenAI-compatible endpoint for embeddings."""
+    """Generates a 1536-dim vector for semantic search."""
     url = "https://openrouter.ai/api/v1/embeddings"
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "openai/text-embedding-3-small", 
-        "input": text
-    }
+    payload = {"model": "openai/text-embedding-3-small", "input": text}
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=15)
-        if res.status_code == 200:
-            return res.json()['data'][0]['embedding']
-        print(f"Embedding Error: {res.text}")
-        return None
+        return res.json()['data'][0]['embedding'] if res.status_code == 200 else None
     except Exception as e:
-        print(f"Embedding Exception: {e}")
+        print(f"Embedding error: {e}")
         return None
-
-def get_supabase_count():
-    """Directly counts records in your table for 100% accuracy."""
-    # Assuming your table is named 'employees'. Change if your table is named 'payroll' or 'documents'.
-    url = f"{SUPABASE_URL}/rest/v1/documents?select=count" 
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Prefer": "count=exact"
-    }
-    try:
-        res = requests.get(url, headers=headers)
-        # Supabase returns count in the Content-Range header: '0-0/45'
-        content_range = res.headers.get("Content-Range")
-        if content_range:
-            return content_range.split("/")[-1]
-        return "unknown"
-    except:
-        return "unknown"
 
 def search_supabase_vectors(embedding):
-    """Finds specific text chunks for RAG."""
+    """Finds top 10 relevant chunks. Increased count ensures we catch Summaries."""
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
     headers = {
         "apikey": SUPABASE_KEY, 
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {"query_embedding": embedding, "match_threshold": 0.3, "match_count": 5}
+    # Increased match_count to 10 for better context depth
+    payload = {"query_embedding": embedding, "match_threshold": 0.4, "match_count": 10}
     res = requests.post(url, headers=headers, json=payload)
     return res.json() if res.ok else []
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
-        q = request_data.question.lower()
-        
-        # --- INTELLIGENT ROUTING ---
-        # 1. Check if the user is asking for a count (Headcount/Total Employees)
-        if any(word in q for word in ["how many employees", "total employees", "headcount", "number of staff"]):
-            total = get_supabase_count()
-            return {
-                "status": "success", 
-                "answer": f"I've checked the database directly: there are currently {total} employees enrolled in the system."
-            }
-
-        # 2. Standard Intelligent Search (RAG) for other questions
+        # 1. Semantic Search Logic
         vector = get_embedding(request_data.question)
         if not vector:
-            return {"status": "error", "message": "Connection to OpenRouter failed."}
+            return {"status": "error", "message": "Failed to generate search vector."}
 
         matches = search_supabase_vectors(vector)
-        context = "\n".join([m["content"] for m in matches]) if matches else "No specific records found."
+        
+        # 2. Build Context with Source Attribution
+        # This tells the AI exactly which file the data came from
+        context_list = []
+        for m in matches:
+            source = m.get('metadata', {}).get('source', 'Unknown File')
+            context_list.append(f"[Source: {source}]: {m['content']}")
+        
+        context = "\n".join(context_list) if context_list else "No relevant records found."
 
-        # OpenRouter Chat Completion
+        # 3. High-Intelligence System Prompt
+        # This resolves the "7 vs 6" issue by instructing the AI on how to read summaries.
+        system_instruction = """
+        You are a Professional Payroll & HR Assistant. Use the provided context to answer.
+        
+        CORE RULES:
+        1. If asked for totals (count of employees, total salary), look for a line starting with 'Summary for...'. 
+           TRUST THE SUMMARY LINE above all else. Do not manually count individual data rows.
+        2. Always mention which file the information was found in (e.g., 'According to the Master Payroll file...').
+        3. If a specific employee is mentioned, provide all relevant details (Salary, ID, Status) found in the context.
+        4. Maintain a conversational but professional tone.
+        5. If the information is missing from the context, say: 'I'm sorry, I don't have that specific record in my system.'
+        """
+
+        # 4. LLM Generation (Llama 3.2 for complex reasoning)
         llm_url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
         
         llm_payload = {
             "model": "meta-llama/llama-3.2-3b-instruct",
             "messages": [
-                {"role": "system", "content": f"You are a Payroll Assistant. Use this data: {context}. If info is missing, say you don't know."},
-                {"role": "user", "content": request_data.question}
-            ]
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": f"Context for search:\n{context}\n\nQuestion: {request_data.question}"}
+            ],
+            "temperature": 0.3 # Lower temperature ensures more factual, less creative answers
         }
 
         res = requests.post(llm_url, headers=headers, json=llm_payload)
+        
         if res.status_code == 200:
             answer = res.json()['choices'][0]['message']['content']
             return {"status": "success", "answer": answer}
@@ -114,4 +103,4 @@ async def chat(request_data: ChatRequest):
         return {"status": "error", "message": f"LLM Error: {res.status_code}"}
 
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Server Error: {str(e)}"}
