@@ -15,7 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -24,16 +23,13 @@ class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    """Generates a 1536-dim vector for semantic search."""
     url = "https://openrouter.ai/api/v1/embeddings"
     headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
     payload = {"model": "openai/text-embedding-3-small", "input": text}
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=15)
         return res.json()['data'][0]['embedding'] if res.status_code == 200 else None
-    except Exception as e:
-        print(f"Embedding error: {e}")
-        return None
+    except: return None
 
 def search_supabase_vectors(embedding):
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
@@ -42,50 +38,42 @@ def search_supabase_vectors(embedding):
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    # CHANGE 1: Lower threshold from 0.4 to 0.2 (more inclusive)
-    # CHANGE 2: Increase match_count to 15
-    payload = {
-        "query_embedding": embedding, 
-        "match_threshold": 0.2, 
-        "match_count": 15
-    }
+    payload = {"query_embedding": embedding, "match_threshold": 0.2, "match_count": 20}
     res = requests.post(url, headers=headers, json=payload)
     return res.json() if res.ok else []
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
-        # 1. Semantic Search Logic
         vector = get_embedding(request_data.question)
-        if not vector:
-            return {"status": "error", "message": "Failed to generate search vector."}
+        if not vector: return {"status": "error", "message": "Connection error."}
 
         matches = search_supabase_vectors(vector)
         
-        # 2. Build Context with Source Attribution
-        # This tells the AI exactly which file the data came from
-        context_list = []
+        # Sorter: Keep summary info but don't force the AI to mention file names
+        summary_info = ""
+        context_data = ""
         for m in matches:
-            source = m.get('metadata', {}).get('source', 'Unknown File')
-            context_list.append(f"[Source: {source}]: {m['content']}")
+            if "Summary" in m['content']:
+                summary_info += m['content'] + "\n"
+            else:
+                context_data += m['content'] + "\n"
         
-        context = "\n".join(context_list) if context_list else "No relevant records found."
+        final_context = summary_info + context_data
 
-        # 3. High-Intelligence System Prompt
-        # This resolves the "7 vs 6" issue by instructing the AI on how to read summaries.
+        # --- HUMAN-LIKE SYSTEM PROMPT ---
         system_instruction = """
-        You are a Professional Payroll & HR Assistant. Use the provided context to answer.
+        You are a helpful and friendly HR Assistant. 
+        Your goal is to answer questions naturally and directly, as if you are talking to a teammate.
         
-        CORE RULES:
-        1. If asked for totals (count of employees, total salary), look for a line starting with 'Summary for...'. 
-           TRUST THE SUMMARY LINE above all else. Do not manually count individual data rows.
-        2. Always mention which file the information was found in (e.g., 'According to the Master Payroll file...').
-        3. If a specific employee is mentioned, provide all relevant details (Salary, ID, Status) found in the context.
-        4. Maintain a conversational but professional tone.
-        5. If the information is missing from the context, say: 'I'm sorry, I don't have that specific record in my system.'
+        RULES:
+        1. Be direct. If asked "how many employees", just say "There are currently 6 employees in the company."
+        2. Do NOT mention file names like "sample.csv" or "Summary for..." unless specifically asked.
+        3. Use the provided context to stay accurate, especially for totals and names.
+        4. If you don't know the answer, just say you don't have that information right now.
+        5. Keep your tone warm and professional.
         """
 
-        # 4. LLM Generation (Llama 3.2 for complex reasoning)
         llm_url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
         
@@ -93,18 +81,16 @@ async def chat(request_data: ChatRequest):
             "model": "meta-llama/llama-3.2-3b-instruct",
             "messages": [
                 {"role": "system", "content": system_instruction},
-                {"role": "user", "content": f"Context for search:\n{context}\n\nQuestion: {request_data.question}"}
+                {"role": "user", "content": f"Context: {final_context}\n\nUser Question: {request_data.question}"}
             ],
-            "temperature": 0.3 # Lower temperature ensures more factual, less creative answers
+            "temperature": 0.7 # Increased for a more "human" and less "robotic" flow
         }
 
         res = requests.post(llm_url, headers=headers, json=llm_payload)
-        
         if res.status_code == 200:
-            answer = res.json()['choices'][0]['message']['content']
-            return {"status": "success", "answer": answer}
+            return {"status": "success", "answer": res.json()['choices'][0]['message']['content']}
         
-        return {"status": "error", "message": f"LLM Error: {res.status_code}"}
+        return {"status": "error", "message": "LLM Error"}
 
     except Exception as e:
-        return {"status": "error", "message": f"Server Error: {str(e)}"}
+        return {"status": "error", "message": str(e)}
