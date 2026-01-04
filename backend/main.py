@@ -38,9 +38,17 @@ def search_supabase_vectors(embedding):
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {"query_embedding": embedding, "match_threshold": 0.2, "match_count": 20}
+    payload = {
+        "query_embedding": embedding, 
+        "match_threshold": 0.2, 
+        "match_count": 10 # Lowering this to 10 reduces 'noise'
+    }
     res = requests.post(url, headers=headers, json=payload)
-    return res.json() if res.ok else []
+    results = res.json() if res.ok else []
+    
+    # NEW: Sort by ID descending so the NEWEST uploads are at the top of the list
+    results.sort(key=lambda x: x.get('id', 0), reverse=True)
+    return results
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
