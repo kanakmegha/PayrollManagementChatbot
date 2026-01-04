@@ -36,15 +36,19 @@ def get_embedding(text: str):
         return None
 
 def search_supabase_vectors(embedding):
-    """Finds top 10 relevant chunks. Increased count ensures we catch Summaries."""
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
     headers = {
         "apikey": SUPABASE_KEY, 
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    # Increased match_count to 10 for better context depth
-    payload = {"query_embedding": embedding, "match_threshold": 0.4, "match_count": 10}
+    # CHANGE 1: Lower threshold from 0.4 to 0.2 (more inclusive)
+    # CHANGE 2: Increase match_count to 15
+    payload = {
+        "query_embedding": embedding, 
+        "match_threshold": 0.2, 
+        "match_count": 15
+    }
     res = requests.post(url, headers=headers, json=payload)
     return res.json() if res.ok else []
 
