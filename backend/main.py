@@ -15,7 +15,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-HF_TOKEN = os.getenv("HF_API_KEY")
+# Configuration
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -23,55 +24,79 @@ class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    # This remains free and unaffected by your $0.10 limit
-    url = "https://api-inference.huggingface.co/models/BAAI/bge-small-en-v1.5"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": text, "options": {"wait_for_model": True}}
+    """Generates embeddings using OpenRouter's OpenAI-compatible API."""
+    url = "https://openrouter.ai/api/v1/embeddings"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "openai/text-embedding-3-small", # Efficient and cheap
+        "input": text
+    }
     
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code != 200:
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        if response.status_code == 200:
+            return response.json()['data'][0]['embedding']
+        print(f"Embedding Error: {response.status_code} - {response.text}")
         return None
-    data = res.json()
-    return data[0] if isinstance(data, list) and isinstance(data[0], list) else data
+    except Exception as e:
+        print(f"Embedding Exception: {str(e)}")
+        return None
 
 def search_supabase(embedding):
+    """Retrieves relevant context from Supabase."""
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    payload = {"query_embedding": embedding, "match_threshold": 0.3, "match_count": 5}
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "query_embedding": embedding,
+        "match_threshold": 0.3,
+        "match_count": 5
+    }
     res = requests.post(url, headers=headers, json=payload)
     return res.json() if res.ok else []
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
+        # 1. Get Vector
         vector = get_embedding(request_data.question)
         if not vector:
-            return {"status": "error", "message": "Embedding failed. Check HF_API_KEY in Render."}
+            return {"status": "error", "message": "Failed to generate embedding via OpenRouter."}
 
+        # 2. Search Context
         matches = search_supabase(vector)
         context = "\n".join([m["content"] for m in matches]) if matches else "No data."
 
-        # FIXED: Using the FREE Serverless URL instead of the Paid Router
-        # We use Mistral-7B because it has a high free allowance
-        free_llm_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+        # 3. Chat via OpenRouter
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://render.com", # Optional for OpenRouter rankings
+            "X-Title": "Payroll Assistant"
+        }
         
-        # NOTE: The free tier uses "inputs", not "messages"
         payload = {
-            "inputs": f"<s>[INST] Use this payroll data: {context}\n\nQuestion: {request_data.question} [/INST]",
-            "parameters": {"max_new_tokens": 200, "temperature": 0.7}
+            "model": "meta-llama/llama-3.2-3b-instruct", # Powerful & very cheap on OpenRouter
+            "messages": [
+                {"role": "system", "content": f"You are a payroll assistant. Context: {context}"},
+                {"role": "user", "content": request_data.question}
+            ]
         }
 
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        response = requests.post(free_llm_url, headers=headers, json=payload)
-
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        
         if response.status_code == 200:
-            result = response.json()
-            # Free tier returns a list: [{'generated_text': '...'}]
-            full_text = result[0]['generated_text']
-            answer = full_text.split("[/INST]")[-1].strip()
+            answer = response.json()['choices'][0]['message']['content']
             return {"status": "success", "answer": answer}
-        else:
-            return {"status": "error", "message": f"Free Tier Error: {response.text}"}
+        
+        return {"status": "error", "message": f"OpenRouter Error: {response.text}"}
 
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Server Error: {str(e)}"}
