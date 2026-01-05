@@ -15,104 +15,83 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- CONFIGURATION ---
-# Make sure to add HF_TOKEN to your .env file
-HF_TOKEN = os.getenv("HF_TOKEN")
+# Configuration
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Hugging Face Chat Model (Fast & Free)
+HF_MODEL_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 
 class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    """Uses Hugging Face Serverless API for embeddings"""
-    # Standard fast embedding model
-    model_id = "sentence-transformers/all-MiniLM-L6-v2"
-    url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_id}"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    
+    """Uses OpenRouter for 1536-dimension embeddings (keeps your DB compatible)."""
+    url = "https://openrouter.ai/api/v1/embeddings"
+    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+    payload = {"model": "openai/text-embedding-3-small", "input": text}
     try:
-        response = requests.post(url, headers=headers, json={"inputs": [text], "options": {"wait_for_model": True}}, timeout=15)
-        if response.status_code == 200:
-            # Hugging Face returns a list of lists for feature-extraction
-            return response.json()[0] 
-        return None
-    except Exception as e:
-        print(f"Embedding Error: {e}")
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        return res.json()['data'][0]['embedding'] if res.status_code == 200 else None
+    except:
         return None
 
 def search_supabase_vectors(embedding):
+    """Searches Supabase and returns results sorted by ID (newest first)."""
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
     headers = {
         "apikey": SUPABASE_KEY, 
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "query_embedding": embedding, 
-        "match_threshold": 0.2, 
-        "match_count": 10 
-    }
+    payload = {"query_embedding": embedding, "match_threshold": 0.2, "match_count": 10}
     res = requests.post(url, headers=headers, json=payload)
     results = res.json() if res.ok else []
     
-    # Sort by ID descending for newest context
+    # SORT BY ID: Ensures the '7 employee' update is prioritized over old data
     results.sort(key=lambda x: x.get('id', 0), reverse=True)
     return results
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
-        # 1. Get Vector from Hugging Face
+        # 1. Get 1536-dim Embedding from OpenRouter
         vector = get_embedding(request_data.question)
-        if not vector: 
-            return {"status": "error", "message": "Could not generate embedding."}
+        if not vector:
+            return {"status": "error", "message": "Embedding service failed."}
 
-        # 2. Search Supabase
+        # 2. Search Database
         matches = search_supabase_vectors(vector)
         
-        summary_info = ""
-        context_data = ""
-        for m in matches:
-            if "Summary" in m['content']:
-                summary_info += m['content'] + "\n"
-            else:
-                context_data += m['content'] + "\n"
-        
-        final_context = summary_info + context_data
+        # 3. Prepare Context
+        summaries = [m['content'] for m in matches if "Summary" in m['content']]
+        details = [m['content'] for m in matches if "Summary" not in m['content']]
+        final_context = "\n".join(summaries + details)
 
-        # 3. Call LLM (Llama 3.2 via HF Router)
-        # Using the OpenAI-compatible router at Hugging Face
-        llm_url = "https://router.huggingface.co/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+        # 4. Human-Like Prompt for Hugging Face
+        # Mistral uses [INST] tags for instructions
+        prompt = f"<s>[INST] You are a friendly HR assistant. Use this data:\n{final_context}\n\nQuestion: {request_data.question}\nAnswer directly and humanly. Do not mention file names or technical IDs. [/INST]"
         
-        system_instruction = """
-        You are a friendly and efficient HR Assistant. 
-        Your goal is to provide quick, natural answers as if you are talking to a teammate.
-        - BE DIRECT: Just give the answer.
-        - HUMAN TONE: Warm and professional.
-        - NO TECHNICAL JARGON: Never mention file types or metadata.
-        - TRUST SUMMARIES: Use 'Summary for...' totals as truth.
-        """
-
-        llm_payload = {
-            "model": "meta-llama/Llama-3.2-3B-Instruct:hf-inference", # Ensure provider is specified
-            "messages": [
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": f"Context: {final_context}\n\nUser Question: {request_data.question}"}
-            ],
-            "temperature": 0.7,
-            "max_tokens": 500
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": 150,
+                "temperature": 0.7,
+                "return_full_text": False
+            }
         }
 
-        res = requests.post(llm_url, headers=headers, json=llm_payload)
+        # 5. Get Answer from Hugging Face
+        res = requests.post(HF_MODEL_URL, headers=headers, json=payload, timeout=15)
         
         if res.status_code == 200:
-            return {"status": "success", "answer": res.json()['choices'][0]['message']['content']}
-        elif res.status_code == 503:
-            return {"status": "error", "message": "Model is loading on Hugging Face. Please try again in 30 seconds."}
+            answer = res.json()[0]['generated_text'].strip()
+            return {"status": "success", "answer": answer}
         
-        return {"status": "error", "message": f"HF Error: {res.text}"}
+        return {"status": "error", "message": f"Hugging Face API error: {res.status_code}"}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
