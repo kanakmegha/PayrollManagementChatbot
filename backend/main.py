@@ -22,7 +22,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Hugging Face Chat Model (Fast & Free)
-HF_MODEL_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+# Use the Router URL for speed and reliability
+HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
+
+# The rest of your code remains the same!
 
 class ChatRequest(BaseModel):
     question: str
