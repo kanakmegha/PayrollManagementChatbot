@@ -15,7 +15,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+# --- CONFIGURATION ---
+# Make sure to add HF_TOKEN to your .env file
+HF_TOKEN = os.getenv("HF_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -23,13 +25,21 @@ class ChatRequest(BaseModel):
     question: str
 
 def get_embedding(text: str):
-    url = "https://openrouter.ai/api/v1/embeddings"
-    headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
-    payload = {"model": "openai/text-embedding-3-small", "input": text}
+    """Uses Hugging Face Serverless API for embeddings"""
+    # Standard fast embedding model
+    model_id = "sentence-transformers/all-MiniLM-L6-v2"
+    url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_id}"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=15)
-        return res.json()['data'][0]['embedding'] if res.status_code == 200 else None
-    except: return None
+        response = requests.post(url, headers=headers, json={"inputs": [text], "options": {"wait_for_model": True}}, timeout=15)
+        if response.status_code == 200:
+            # Hugging Face returns a list of lists for feature-extraction
+            return response.json()[0] 
+        return None
+    except Exception as e:
+        print(f"Embedding Error: {e}")
+        return None
 
 def search_supabase_vectors(embedding):
     url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
@@ -41,24 +51,26 @@ def search_supabase_vectors(embedding):
     payload = {
         "query_embedding": embedding, 
         "match_threshold": 0.2, 
-        "match_count": 10 # Lowering this to 10 reduces 'noise'
+        "match_count": 10 
     }
     res = requests.post(url, headers=headers, json=payload)
     results = res.json() if res.ok else []
     
-    # NEW: Sort by ID descending so the NEWEST uploads are at the top of the list
+    # Sort by ID descending for newest context
     results.sort(key=lambda x: x.get('id', 0), reverse=True)
     return results
 
 @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
+        # 1. Get Vector from Hugging Face
         vector = get_embedding(request_data.question)
-        if not vector: return {"status": "error", "message": "Connection error."}
+        if not vector: 
+            return {"status": "error", "message": "Could not generate embedding."}
 
+        # 2. Search Supabase
         matches = search_supabase_vectors(vector)
         
-        # Sorter: Keep summary info but don't force the AI to mention file names
         summary_info = ""
         context_data = ""
         for m in matches:
@@ -69,36 +81,38 @@ async def chat(request_data: ChatRequest):
         
         final_context = summary_info + context_data
 
-        # --- HUMAN-LIKE SYSTEM PROMPT ---
+        # 3. Call LLM (Llama 3.2 via HF Router)
+        # Using the OpenAI-compatible router at Hugging Face
+        llm_url = "https://router.huggingface.co/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+        
         system_instruction = """
         You are a friendly and efficient HR Assistant. 
         Your goal is to provide quick, natural answers as if you are talking to a teammate.
-
-        CORE GUIDELINES:
-        - BE DIRECT: If someone asks "how many employees", just say "There are currently 6 employees in the company."
-        - HUMAN TONE: Use a warm, professional, and conversational style. 
-        - NO TECHNICAL JARGON: Never mention 'CSV files', 'metadata', 'Summary rows', or 'IDs' unless specifically asked.
-        - TRUST SUMMARIES: If the context contains a 'Summary for...', use those totals (counts/salaries) as the absolute truth.
-        - PRIVACY: Don't dump a whole list of data; just answer the specific question asked.
+        - BE DIRECT: Just give the answer.
+        - HUMAN TONE: Warm and professional.
+        - NO TECHNICAL JARGON: Never mention file types or metadata.
+        - TRUST SUMMARIES: Use 'Summary for...' totals as truth.
         """
 
-        llm_url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
-        
         llm_payload = {
-            "model": "meta-llama/llama-3.2-3b-instruct",
+            "model": "meta-llama/Llama-3.2-3B-Instruct:hf-inference", # Ensure provider is specified
             "messages": [
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": f"Context: {final_context}\n\nUser Question: {request_data.question}"}
             ],
-            "temperature": 0.7 # Increased for a more "human" and less "robotic" flow
+            "temperature": 0.7,
+            "max_tokens": 500
         }
 
         res = requests.post(llm_url, headers=headers, json=llm_payload)
+        
         if res.status_code == 200:
             return {"status": "success", "answer": res.json()['choices'][0]['message']['content']}
+        elif res.status_code == 503:
+            return {"status": "error", "message": "Model is loading on Hugging Face. Please try again in 30 seconds."}
         
-        return {"status": "error", "message": "LLM Error"}
+        return {"status": "error", "message": f"HF Error: {res.text}"}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
