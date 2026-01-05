@@ -23,8 +23,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Hugging Face Chat Model (Fast & Free)
 # Use the Router URL for speed and reliability
-HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
-
+# --- THE 404 FIX ---
+# Use the direct model endpoint which is most stable for Mistral
+HF_MODEL_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 # The rest of your code remains the same!
 
 class ChatRequest(BaseModel):
@@ -77,7 +78,10 @@ async def chat(request_data: ChatRequest):
         # Mistral uses [INST] tags for instructions
         prompt = f"<s>[INST] You are a friendly HR assistant. Use this data:\n{final_context}\n\nQuestion: {request_data.question}\nAnswer directly and humanly. Do not mention file names or technical IDs. [/INST]"
         
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        # Ensure there are no extra spaces in the token
+        hf_token_clean = HF_TOKEN.strip() if HF_TOKEN else ""
+        headers = {"Authorization": f"Bearer {hf_token_clean}", "Content-Type": "application/json"}
+        
         payload = {
             "inputs": prompt,
             "parameters": {
@@ -87,7 +91,7 @@ async def chat(request_data: ChatRequest):
             }
         }
 
-        # 5. Get Answer from Hugging Face
+        # Use the updated Router URL
         res = requests.post(HF_MODEL_URL, headers=headers, json=payload, timeout=15)
         
         if res.status_code == 200:
