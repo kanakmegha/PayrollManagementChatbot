@@ -1,17 +1,13 @@
 import os
 import requests
-from fastapi import FastAPI, BackgroundTasks
-from supabase import create_client, Client
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 
 app = FastAPI()
 
-# --- 1. THE CONNECTION (FIXED) ---
-# This ensures 'supabase' is defined globally so all functions can see it
+# --- 1. CONFIGURATION ---
+# These must be in your Render Environment Variables
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# URL of your new HF Space
 HF_SPACE_URL = "https://Meg89-payroll-heavy-lifter.hf.space"
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
@@ -24,7 +20,7 @@ def wake_hf():
 
 @app.get("/")
 def root():
-    return {"message": "Payroll Manager Online"}
+    return {"message": "Payroll Manager (Requests-Mode) Online"}
 
 @app.post("/chat")
 async def chat(request_data: dict, background_tasks: BackgroundTasks):
@@ -32,27 +28,43 @@ async def chat(request_data: dict, background_tasks: BackgroundTasks):
     background_tasks.add_task(wake_hf)
 
     user_text = request_data.get("question")
+    if not user_text:
+        raise HTTPException(status_code=400, detail="No question provided")
 
-    # STEP 1: Get math from Hugging Face
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    # STEP 1: Get Vector from Hugging Face
+    headers_hf = {"Authorization": f"Bearer {HF_TOKEN}"}
     try:
-        response = requests.post(f"{HF_SPACE_URL}/embed", 
-                                 headers=headers, 
-                                 json={"text": user_text}, 
-                                 timeout=15)
-        vector = response.json().get("embedding")
-    except Exception:
-        return {"answer": "The AI brain is waking up. Please try again in 10 seconds."}
+        response_hf = requests.post(
+            f"{HF_SPACE_URL}/embed", 
+            headers=headers_hf, 
+            json={"text": user_text}, 
+            timeout=15
+        )
+        vector = response_hf.json().get("embedding")
+    except Exception as e:
+        return {"answer": "The AI brain is warming up. Please try again in 30 seconds."}
 
-    # STEP 2: Search your Supabase Database
-    # This uses the exact same function name you likely used in SQL
-    result = supabase.rpc("match_documents", {
+    # STEP 2: Search Supabase using direct REST API (Manual Mode)
+    # This replaces the broken 'supabase' library logic
+    supabase_rpc_url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
+    headers_sb = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload_sb = {
         "query_embedding": vector,
         "match_threshold": 0.5,
         "match_count": 1
-    }).execute()
+    }
 
-    if result.data:
-        return {"answer": result.data[0]['content']}
-    
-    return {"answer": "I couldn't find that in the payroll records."}
+    try:
+        response_sb = requests.post(supabase_rpc_url, headers=headers_sb, json=payload_sb)
+        data = response_sb.json()
+        
+        if data and len(data) > 0:
+            return {"answer": data[0]['content']}
+        return {"answer": "I couldn't find an answer in the payroll documents."}
+        
+    except Exception as e:
+        return {"answer": f"Database error: {str(e)}"}
