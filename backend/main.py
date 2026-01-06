@@ -54,7 +54,7 @@ async def chat(request_data: dict, background_tasks: BackgroundTasks):
     }
     payload_sb = {
         "query_embedding": vector,
-        "match_threshold": 0.5,
+        "match_threshold": 0.1,
         "match_count": 1
     }
 
