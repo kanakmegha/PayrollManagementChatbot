@@ -58,7 +58,7 @@ def search_supabase_vectors(embedding):
     results.sort(key=lambda x: x.get('id', 0), reverse=True)
     return results
 
-@app.post("/chat")
+""" @app.post("/chat")
 async def chat(request_data: ChatRequest):
     try:
         # 1. Get Embedding (OpenRouter)
@@ -101,6 +101,44 @@ async def chat(request_data: ChatRequest):
             return {"status": "success", "answer": answer}
         
         return {"status": "error", "message": f"HF Router Error: {res.status_code} - {res.text}"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)} """
+@app.post("/chat")
+async def search_only(request_data: ChatRequest):
+    try:
+        # 1. Get Vector for the question
+        embed_res = requests.post(
+            "https://openrouter.ai/api/v1/embeddings",
+            headers={"Authorization": f"Bearer {OPENROUTER_KEY}"},
+            json={"model": "openai/text-embedding-3-small", "input": request_data.question}
+        )
+        vector = embed_res.json()['data'][0]['embedding']
+
+        # 2. Search Supabase
+        # We ask for the top 1 result only
+        rpc_response = supabase.rpc("match_documents", {
+            "query_embedding": vector,
+            "match_threshold": 0.5, # Adjust based on how strict you want to be
+            "match_count": 1
+        }).execute()
+
+        # 3. Handle the result
+        if rpc_response.data:
+            best_match = rpc_response.data[0]
+            similarity = best_match['similarity']
+            
+            # If the match is strong, show it!
+            if similarity > 0.75:
+                return {
+                    "status": "success",
+                    "answer": best_match['content'],
+                    "confidence": f"{similarity:.2%}"
+                }
+            else:
+                return {"status": "error", "message": "I found something, but I'm not sure it's the right answer."}
+        
+        return {"status": "error", "message": "No relevant information found in the payroll records."}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
