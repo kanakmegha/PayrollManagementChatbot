@@ -12,7 +12,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 # Must be the .hf.space link, e.g., https://username-space.hf.space
-HF_SPACE_URL = os.getenv("HF_SPACE_URL") 
+HF_SPACE_URL = os.getenv("HUGGINGFACE_API_KEY") 
 
 class ChatRequest(BaseModel):
     question: str
