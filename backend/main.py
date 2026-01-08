@@ -24,7 +24,6 @@ def root():
 
 @app.post("/chat")
 async def chat(request_data: dict, background_tasks: BackgroundTasks):
-    # Keep the worker awake in the background
     background_tasks.add_task(wake_hf)
 
     user_text = request_data.get("question")
@@ -40,31 +39,50 @@ async def chat(request_data: dict, background_tasks: BackgroundTasks):
             json={"text": user_text}, 
             timeout=15
         )
-        vector = response_hf.json().get("embedding")
-    except Exception as e:
-        return {"answer": "The AI brain is warming up. Please try again in 30 seconds."}
+        raw_data = response_hf.json()
 
-    # STEP 2: Search Supabase using direct REST API (Manual Mode)
-    # This replaces the broken 'supabase' library logic
+        # --- THE STRICT CLEANER ---
+        # This loop digs through lists and dicts until it finds the raw list of floats
+        vector = raw_data
+        while isinstance(vector, list) and len(vector) > 0 and not isinstance(vector[0], (int, float)):
+            vector = vector[0]
+        
+        if isinstance(vector, dict):
+            vector = vector.get("embedding")
+
+        # Validation: If it's not a list of numbers now, it's broken
+        if not isinstance(vector, list) or not isinstance(vector[0], (int, float)):
+            return {"answer": f"Embedding format error: Received {type(vector)} instead of list of floats."}
+
+    except Exception as e:
+        return {"answer": f"AI Brain Error: {str(e)}"}
+
+    # STEP 2: Search Supabase
     supabase_rpc_url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
     headers_sb = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
+    
     payload_sb = {
-        "query_embedding": vector,
+        "query_embedding": vector, # This is now guaranteed to be [0.123, 0.456, ...]
         "match_threshold": 0.1,
         "match_count": 1
     }
 
     try:
         response_sb = requests.post(supabase_rpc_url, headers=headers_sb, json=payload_sb)
-        data = response_sb.json()
         
+        if response_sb.status_code != 200:
+            # This will show you exactly what Postgres is complaining about
+            return {"answer": f"Database Error: {response_sb.text}"}
+            
+        data = response_sb.json()
         if data and len(data) > 0:
-            return {"answer": data[0]['content']}
+            return {"answer": data[0].get('content', "No content found.")}
+        
         return {"answer": "I couldn't find an answer in the payroll documents."}
         
     except Exception as e:
-        return {"answer": f"Database error: {str(e)}"}
+        return {"answer": f"System error: {str(e)}"}
