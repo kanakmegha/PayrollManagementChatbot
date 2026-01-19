@@ -3,127 +3,143 @@ import requests
 import time
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# 1. Load Environment Variables
+load_dotenv()
+
+class Settings:
+    # These must be set in your Render/Local environment variables
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+    HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY") 
+    HF_SPACE_URL = os.getenv("HF_SPACE_URL")
 
 app = FastAPI()
-
-# --- Configuration ---
-# Ensure these are set in your Render Dashboard -> Environment Variables
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
-# Must be the .hf.space link, e.g., https://username-space.hf.space
-HF_SPACE_URL = os.getenv("HF_SPACE_URL") 
 
 class ChatRequest(BaseModel):
     question: str
 
 def wake_hf():
-    """Background task to keep the HF Space awake."""
+    """Background task to keep the HF Space awake and responsive."""
     try:
-        requests.get(HF_SPACE_URL, timeout=5)
+        # Pinging the root endpoint
+        requests.get(Settings.HF_SPACE_URL, timeout=10)
     except:
         pass
 
 @app.post("/chat")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
+    # Keep HF Space from idling
     background_tasks.add_task(wake_hf)
+    
     user_text = request.question
-    
-    # 1. CHAIN OF THOUGHT: Start
     cot = [f"User asked: '{user_text}'"]
-    print(f"[LOG] {cot[-1]}")
-
-    # 2. STEP: Get Embedding from Hugging Face
-    headers_hf = {"Authorization": f"Bearer {HF_TOKEN}"}
-    vector = None
     
+    headers_hf = {"Authorization": f"Bearer {Settings.HF_TOKEN}"}
+    vector = None
+
+    # --- STEP 1: GET EMBEDDING (SEARCH PREP) ---
     try:
-        cot.append("Step 1: Requesting 384-dim vector from Hugging Face Space...")
-        # Use a retry loop for 'NoneType' or 503 errors (Warming up)
+        cot.append("Step 1: Requesting vector from Hugging Face Space...")
         for attempt in range(2):
-            resp_hf = requests.post(f"{HF_SPACE_URL}/embed", headers=headers_hf, json={"text": user_text}, timeout=20)
+            resp_hf = requests.post(
+                f"{Settings.HF_SPACE_URL}/embed", 
+                headers=headers_hf, 
+                json={"text": user_text}, 
+                timeout=20
+            )
             
             if resp_hf.status_code == 503:
-                cot.append("HF Space is sleeping. Retrying in 5 seconds...")
+                cot.append("HF Space is warming up. Retrying in 5s...")
                 time.sleep(5)
                 continue
 
             data_hf = resp_hf.json()
-            # Robust extraction to avoid 'NoneType' error
+            # Robust vector extraction from your HF structure
             if isinstance(data_hf, list) and len(data_hf) > 0:
                 vector = data_hf[0].get("embedding") if isinstance(data_hf[0], dict) else data_hf[0]
             elif isinstance(data_hf, dict):
                 vector = data_hf.get("embedding")
 
-            if vector:
-                break
+            if vector: break
         
         if not vector:
-            error_msg = f"Embedding Error: HF returned {type(data_hf)}. Raw: {str(data_hf)[:100]}"
-            cot.append(error_msg)
-            return {"answer": error_msg, "chain_of_thought": cot}
-
-        cot.append(f"Successfully received vector of length {len(vector)}.")
-
+            return {"answer": "Error: Could not generate search vector.", "chain_of_thought": cot}
+            
     except Exception as e:
-        return {"answer": f"Embedding Connection Error: {str(e)}", "chain_of_thought": cot}
+        return {"answer": f"Connection Error (HF Embed): {str(e)}", "chain_of_thought": cot}
 
-    # 3. STEP: Search Supabase
-    cot.append("Step 2: Searching Supabase using 'match_documents' RPC...")
-    rpc_url = f"{SUPABASE_URL}/rest/v1/rpc/match_documents"
-    headers_sb = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    # We grab 8 chunks to bypass any "0 summary" bugs
-    payload_sb = {
-        "query_embedding": vector,
-        "match_threshold": 0.2, 
-        "match_count": 8
-    }
-
+    # --- STEP 2: SEARCH SUPABASE ---
     try:
+        cot.append("Step 2: Retrieving top candidates from Supabase...")
+        rpc_url = f"{Settings.SUPABASE_URL}/rest/v1/rpc/match_documents"
+        headers_sb = {
+            "apikey": Settings.SUPABASE_KEY,
+            "Authorization": f"Bearer {Settings.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload_sb = {
+            "query_embedding": vector,
+            "match_threshold": 0.2, 
+            "match_count": 8
+        }
+
         resp_sb = requests.post(rpc_url, headers=headers_sb, json=payload_sb)
         db_results = resp_sb.json()
         
-        if not db_results or len(db_results) == 0:
-            cot.append("Database Search: No relevant document chunks found.")
-            return {"answer": "I don't have enough information in my database to answer that.", "chain_of_thought": cot}
+        if not db_results:
+            return {"answer": "I couldn't find any relevant data in my records.", "chain_of_thought": cot}
 
-        cot.append(f"Found {len(db_results)} matching chunks. Filtering results...")
-
-        # 4. STEP: Logic/Reasoning (Chain of Thought)
-        final_context = []
-        for i, doc in enumerate(db_results):
-            txt = doc.get("content", "")
-            score = round(doc.get("similarity", 0), 3)
-            
-            # THE BUG FILTER: Skip the summary lines that contain the "0" error
-            if "Summary for" in txt and "is 0" in txt:
-                cot.append(f"Chunk {i+1} (Score {score}): Skipped (Detected incorrect auto-summary).")
+        # Filter out invalid summaries (your existing bug filter)
+        valid_chunks = []
+        for d in db_results:
+            content = d.get("content", "")
+            if "is 0" in content and "Summary" in content:
                 continue
+            valid_chunks.append(content)
             
-            cot.append(f"Chunk {i+1} (Score {score}): Accepted factual data.")
-            final_context.append(txt)
+        if not valid_chunks:
+            return {"answer": "Found data, but it appears to be empty or corrupted.", "chain_of_thought": cot}
 
-        if not final_context:
-            return {"answer": "I found references, but they were incomplete summaries. Please check your source file.", "chain_of_thought": cot}
+    except Exception as e:
+        return {"answer": f"Database Error: {str(e)}", "chain_of_thought": cot}
 
-        # 5. STEP: Conclusion
-        cot.append("Step 3: Compiling final answer from valid raw text.")
-        answer = "\n".join([f"• {c}" for c in final_context])
+    # --- STEP 3: Reranking & Extraction ---
+    # --- In your main.py /chat endpoint ---
+    try:
+        rerank_resp = requests.post(
+            f"{Settings.HF_SPACE_URL}/rerank",
+            headers=headers_hf,
+            json={"query": user_text, "documents": valid_chunks},
+            timeout=30 # Important for the Brain to have time to write
+        )
+        # ... rest of your code
         
+        rank_data = rerank_resp.json()
+        
+        # This is now the intelligent answer from FLAN-T5
+        intelligent_answer = rank_data.get("best_answer", "No answer found.")
+        
+        # Log the confidence score from the CrossEncoder for transparency
+        score = rank_data.get("score", 0)
+        cot.append(f"Answer extracted successfully. Judge Score: {score}")
+
         return {
-            "answer": f"Based on the files provided:\n\n{answer}",
+            "answer": intelligent_answer,
             "chain_of_thought": cot,
             "status": "success"
         }
 
     except Exception as e:
-        return {"answer": f"Database Error: {str(e)}", "chain_of_thought": cot}
+        # Safety Fallback: If the Brain/Reranker fails, return the best raw chunk
+        fallback = valid_chunks[0].split(":")[-1].strip() if valid_chunks else "Error during extraction."
+        return {
+            "answer": fallback, 
+            "chain_of_thought": cot, 
+            "note": f"Reranking/Extraction failed: {str(e)}"
+        }
 
 @app.get("/")
 def home():
-    return {"status": "Payroll Bot is Online"}
+    return {"status": "Payroll Bot is Online with Intelligent Extraction"}
