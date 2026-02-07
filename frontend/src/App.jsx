@@ -12,7 +12,7 @@ function App() {
   
   //const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
 
-  useEffect(() => {
+  /* useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
@@ -73,7 +73,58 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }; */
+  // Add these at the top of your component or file
+const BACKEND_URL = "https://kanakmegha-payrollmanagementchatbot.hf.space";
+const HF_TOKEN = "your_hf_token_here"; // Get this from your HF Settings
+
+const sendQuery = async () => {
+  if (!query.trim() || loading) return;
+
+  const userMsg = { role: 'user', text: query };
+  setMessages((prev) => [...prev, userMsg]);
+  const currentQuery = query;
+  setQuery("");
+  setLoading(true);
+
+  try {
+    // 1. Prepare documents. 
+    // Note: Your backend expects 'documents'. If you don't have a 
+    // vector store on frontend, you need to pass the context here.
+    const mockDocuments = ["Sample payroll data row"]; 
+
+    const response = await fetch(`${BACKEND_URL}/rerank`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${HF_TOKEN}` // Critical for your new backend
+      },
+      body: JSON.stringify({ 
+        query: currentQuery,
+        documents: mockDocuments // Your backend requires this key
+      }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // 2. Add the AI response to the UI
+    // Your FastAPI returns {"answer": "...", "score": ...}
+    setMessages((prev) => [...prev, { role: 'ai', text: data.answer }]);
+
+  } catch (err) {
+    console.error("Connection error:", err);
+    setMessages((prev) => [...prev, { 
+      role: 'ai', 
+      text: "Sorry, I'm having trouble connecting to the payroll engine." 
+    }]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f3f4f6' }}>
