@@ -1,132 +1,77 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
+
+// Accessing the URL from Vite environment variables
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+
 function App() {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([
     { role: 'ai', text: 'Hello! Ask me anything about payroll.' }
   ]);
   const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState(0); // Track waking up time
+  const [countdown, setCountdown] = useState(0); 
   const scrollRef = useRef(null);
-  
-  //const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
 
-  /* useEffect(() => {
+  // Auto-scroll logic
+  useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Countdown Logic: Runs whenever countdown > 0
+  // Countdown timer for 503 (Model Loading) errors
   useEffect(() => {
     if (countdown <= 0) return;
-
     const timer = setInterval(() => {
       setCountdown((prev) => prev - 1);
     }, 1000);
-
     return () => clearInterval(timer);
   }, [countdown]);
 
   const sendQuery = async () => {
     if (!query.trim() || loading) return;
-  
+
     const userMsg = { role: 'user', text: query };
     setMessages((prev) => [...prev, userMsg]);
     const currentQuery = query;
     setQuery("");
     setLoading(true);
-  
-    // Add an empty AI message that we will "fill" as the stream arrives
-    setMessages((prev) => [...prev, { role: 'ai', text: "" }]);
-  
+
     try {
-      const response = await fetch(`${BACKEND_URL}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: currentQuery }),
+      // SYNCED WITH BACKEND: Using the /chat endpoint
+      // No need to send 'documents' or 'Auth' here; 
+      // the backend handles Supabase and Hugging Face tokens internally.
+      const response = await axios.post(`${BACKEND_URL}/chat`, {
+        question: currentQuery 
       });
-  
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-  
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-  
-        const chunk = decoder.decode(value, { stream: true });
-        
-        // Chunks come in as: {"answer": "Hello"}\n{"answer": " world"}
-        const lines = chunk.split("\n").filter(line => line.trim());
-        
-        for (const line of lines) {
-          const parsed = JSON.parse(line);
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            const lastMsg = newMessages[newMessages.length - 1];
-            lastMsg.text += parsed.answer; // Append the new word
-            return newMessages;
-          });
-        }
-      }
+
+      // Your backend returns: {"answer": "..."}
+      const aiResponse = response.data.answer;
+
+      setMessages((prev) => [...prev, { role: 'ai', text: aiResponse }]);
+
     } catch (err) {
-      console.error("Streaming error:", err);
+      console.error("Connection error:", err);
+      
+      // Handle Model Loading (Common on Hugging Face Free Tier)
+      if (err.response?.status === 503) {
+        setCountdown(20);
+        setMessages((prev) => [...prev, { 
+          role: 'ai', 
+          text: "The payroll engine is warming up (503). Retrying in 20 seconds..." 
+        }]);
+      } else {
+        setMessages((prev) => [...prev, { 
+          role: 'ai', 
+          text: "I'm having trouble connecting to the payroll engine. Please check the backend logs." 
+        }]);
+      }
     } finally {
       setLoading(false);
     }
-  }; */
-  // Add these at the top of your component or file
-
-
-const sendQuery = async () => {
-  if (!query.trim() || loading) return;
-
-  const userMsg = { role: 'user', text: query };
-  setMessages((prev) => [...prev, userMsg]);
-  const currentQuery = query;
-  setQuery("");
-  setLoading(true);
-
-  try {
-    // 1. Prepare documents. 
-    // Note: Your backend expects 'documents'. If you don't have a 
-    // vector store on frontend, you need to pass the context here.
-    const mockDocuments = ["Sample payroll data row"]; 
-
-    const response = await fetch(`${BACKEND_URL}/rerank`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${HUGGINGFACE_API_KEY}` // Critical for your new backend
-      },
-      body: JSON.stringify({ 
-        query: currentQuery,
-        documents: mockDocuments // Your backend requires this key
-      }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Error: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    // 2. Add the AI response to the UI
-    // Your FastAPI returns {"answer": "...", "score": ...}
-    setMessages((prev) => [...prev, { role: 'ai', text: data.answer }]);
-
-  } catch (err) {
-    console.error("Connection error:", err);
-    setMessages((prev) => [...prev, { 
-      role: 'ai', 
-      text: "Sorry, I'm having trouble connecting to the payroll engine." 
-    }]);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f3f4f6' }}>
+    <div style={{ height: '100vh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f3f4f6', fontFamily: 'sans-serif' }}>
       <div style={{ width: '95%', maxWidth: '500px', height: '85vh', backgroundColor: '#fff', borderRadius: '15px', display: 'flex', flexDirection: 'column', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
         
         <div style={{ padding: '15px', borderBottom: '1px solid #eee', fontWeight: 'bold', color: '#4F46E5', display: 'flex', justifyContent: 'space-between' }}>
@@ -140,20 +85,13 @@ const sendQuery = async () => {
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
               backgroundColor: msg.role === 'user' ? '#4F46E5' : '#f1f1f1',
               color: msg.role === 'user' ? '#fff' : '#333',
-              padding: '8px 12px', borderRadius: '12px', maxWidth: '80%', fontSize: '14px'
+              padding: '10px 14px', borderRadius: '12px', maxWidth: '80%', fontSize: '14px', lineHeight: '1.4'
             }}>
               {msg.text}
             </div>
           ))}
           
-          {/* Enhanced Loading States */}
-          {loading && countdown === 0 && <div style={{ fontSize: '12px', color: '#999' }}>AI is thinking...</div>}
-          {countdown > 0 && (
-            <div style={{ fontSize: '12px', color: '#ef4444', fontStyle: 'italic' }}>
-              🧠 Model is loading. Please wait... auto-retrying in {countdown}s.
-            </div>
-          )}
-          
+          {loading && countdown === 0 && <div style={{ fontSize: '12px', color: '#999', marginLeft: '5px' }}>Searching payroll records...</div>}
           <div ref={scrollRef} />
         </div>
 
@@ -162,16 +100,16 @@ const sendQuery = async () => {
             value={query} 
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendQuery()}
-            placeholder={countdown > 0 ? "Waiting for AI..." : "Ask a question..."}
+            placeholder={countdown > 0 ? "Please wait..." : "Ask a question..."}
             disabled={loading || countdown > 0}
-            style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #ddd', backgroundColor: countdown > 0 ? '#f9fafb' : '#fff' }}
+            style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #ddd', outline: 'none' }}
           />
           <button 
-            onClick={() => sendQuery()} 
+            onClick={sendQuery} 
             disabled={loading || countdown > 0}
             style={{ padding: '10px 20px', background: (loading || countdown > 0) ? '#9ca3af' : '#4F46E5', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
           >
-            {countdown > 0 ? "Wait" : "Send"}
+            {loading ? "..." : "Send"}
           </button>
         </div>
       </div>
