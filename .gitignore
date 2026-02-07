@@ -3,5 +3,6 @@ backend/node_modules/
 frontend/node_modules/
 .venv/
 backend/.env/
-.env
+frontend/.env
+
 .DS_Store
