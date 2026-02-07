@@ -10,7 +10,7 @@ function App() {
   const [countdown, setCountdown] = useState(0); // Track waking up time
   const scrollRef = useRef(null);
   
-  const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
+  //const BACKEND_URL = "https://payrollmanagementchatbot.onrender.com";
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
