@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 function App() {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState([
@@ -75,8 +75,7 @@ function App() {
     }
   }; */
   // Add these at the top of your component or file
-const BACKEND_URL = "https://kanakmegha-payrollmanagementchatbot.hf.space";
-const HF_TOKEN = "your_hf_token_here"; // Get this from your HF Settings
+
 
 const sendQuery = async () => {
   if (!query.trim() || loading) return;
@@ -97,7 +96,7 @@ const sendQuery = async () => {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${HF_TOKEN}` // Critical for your new backend
+        'Authorization': `Bearer ${HUGGINGFACE_API_KEY}` // Critical for your new backend
       },
       body: JSON.stringify({ 
         query: currentQuery,
